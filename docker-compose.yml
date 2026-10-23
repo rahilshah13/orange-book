@@ -1,0 +1,65 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile_inline: |
+        FROM python:3.11-slim
+        WORKDIR /app
+        COPY orange.py .
+        RUN pip install --no-cache-dir requests
+        CMD ["python", "orange.py"]
+    volumes:
+      - ./output:/app/output
+    depends_on:
+      gemma-service:
+        condition: service_healthy
+    environment:
+      - GEMMA_ENDPOINT=http://gemma-service:11434/api/generate
+    networks:
+      - drug-net
+
+  gemma-service:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Starting Ollama server in background..."
+        ollama serve &
+        
+        echo "Waiting for Ollama service to accept connections..."
+        until ollama list >/dev/null 2>&1; do
+          sleep 2
+        done
+
+        echo "Pulling gemma:2b..."
+        ollama pull gemma:2b
+
+        echo "Pulling gemma:7b (this may take a few minutes)..."
+        ollama pull gemma:7b
+
+        echo "Verifying installed models..."
+        ollama list
+
+        echo "Gemma setup complete. Keeping service alive."
+        wait
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list | grep -q 'gemma:7b'"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 6m
+    networks:
+      - drug-net
+
+volumes:
+  ollama_data:
+
+networks:
+  drug-net:
+    driver: bridge
